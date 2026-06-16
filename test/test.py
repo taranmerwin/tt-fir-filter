@@ -13,7 +13,7 @@ async def send_sample(dut, value):
     await RisingEdge(dut.clk)
 
 def signed8(v):
-    v = v & 0xFF
+    v = int(v) & 0xFF
     return v - 256 if v >= 128 else v
 
 @cocotb.test()
@@ -70,11 +70,11 @@ async def test_fir_filter(dut):
     await RisingEdge(dut.clk)
     dut.uio_in.value = 0x00
     await RisingEdge(dut.clk)
-    valid = (dut.uio_out.value >> 1) & 1
+    valid = (int(dut.uio_out.value) >> 1) & 1
     assert valid == 1, f"out_valid should be 1, got {valid}"
     dut._log.info("  out_valid high OK")
     await RisingEdge(dut.clk)
-    valid = (dut.uio_out.value >> 1) & 1
+    valid = (int(dut.uio_out.value) >> 1) & 1
     assert valid == 0, f"out_valid should be 0 when idle, got {valid}"
     dut._log.info("  out_valid low when idle OK")
 
