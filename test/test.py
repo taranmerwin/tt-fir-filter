@@ -1,40 +1,81 @@
-# SPDX-FileCopyrightText: © 2024 Tiny Tapeout
+# SPDX-FileCopyrightText: 2024 Tiny Tapeout
 # SPDX-License-Identifier: Apache-2.0
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import ClockCycles, RisingEdge
 
+async def send_sample(dut, value):
+    dut.ui_in.value  = value & 0xFF
+    dut.uio_in.value = 0x01
+    await RisingEdge(dut.clk)
+    dut.uio_in.value = 0x00
+    await RisingEdge(dut.clk)
+
+def signed8(v):
+    v = v & 0xFF
+    return v - 256 if v >= 128 else v
 
 @cocotb.test()
-async def test_project(dut):
-    dut._log.info("Start")
+async def test_fir_filter(dut):
+    dut._log.info("Start FIR filter test")
 
-    # Set the clock period to 10 us (100 KHz)
     clock = Clock(dut.clk, 10, unit="us")
     cocotb.start_soon(clock.start())
 
-    # Reset
-    dut._log.info("Reset")
-    dut.ena.value = 1
-    dut.ui_in.value = 0
+    dut.ena.value    = 1
+    dut.ui_in.value  = 0
     dut.uio_in.value = 0
+    dut.rst_n.value  = 0
+    await ClockCycles(dut.clk, 4)
+    dut.rst_n.value  = 1
+    await ClockCycles(dut.clk, 2)
+
+    dut._log.info("Test 1: impulse response")
+    expected = [15, 47, 47, 15, 0]
+    inputs   = [127, 0, 0, 0, 0]
+    for i, (inp, exp) in enumerate(zip(inputs, expected)):
+        await send_sample(dut, inp)
+        got = signed8(dut.uo_out.value)
+        assert got == exp, f"Impulse tap {i}: expected {exp}, got {got}"
+        dut._log.info(f"  tap {i}: got {got} == {exp} OK")
+
+    dut._log.info("Test 2: DC gain")
     dut.rst_n.value = 0
-    await ClockCycles(dut.clk, 10)
+    await ClockCycles(dut.clk, 2)
     dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 2)
+    for _ in range(4):
+        await send_sample(dut, 127)
+    got = signed8(dut.uo_out.value)
+    assert got == 127, f"DC gain: expected 127, got {got}"
+    dut._log.info(f"  DC output: {got} OK")
 
-    dut._log.info("Test project behavior")
+    dut._log.info("Test 3: negative sample")
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 2)
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 2)
+    await send_sample(dut, 0x80)
+    got = signed8(dut.uo_out.value)
+    assert got == -16, f"Negative: expected -16, got {got}"
+    dut._log.info(f"  -128 -> {got} OK")
 
-    # Set the input values you want to test
-    dut.ui_in.value = 20
-    dut.uio_in.value = 30
+    dut._log.info("Test 4: out_valid flag")
+    dut.rst_n.value  = 0
+    await ClockCycles(dut.clk, 2)
+    dut.rst_n.value  = 1
+    dut.ui_in.value  = 10
+    dut.uio_in.value = 0x01
+    await RisingEdge(dut.clk)
+    dut.uio_in.value = 0x00
+    await RisingEdge(dut.clk)
+    valid = (dut.uio_out.value >> 1) & 1
+    assert valid == 1, f"out_valid should be 1, got {valid}"
+    dut._log.info("  out_valid high OK")
+    await RisingEdge(dut.clk)
+    valid = (dut.uio_out.value >> 1) & 1
+    assert valid == 0, f"out_valid should be 0 when idle, got {valid}"
+    dut._log.info("  out_valid low when idle OK")
 
-    # Wait for one clock cycle to see the output values
-    await ClockCycles(dut.clk, 1)
-
-    # The following assersion is just an example of how to check the output values.
-    # Change it to match the actual expected output of your module:
-    assert dut.uo_out.value == 50
-
-    # Keep testing the module by changing the input values, waiting for
-    # one or more clock cycles, and asserting the expected output values.
+    dut._log.info("ALL TESTS PASSED")
